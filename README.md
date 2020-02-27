@@ -1,4 +1,4 @@
-# SteemCN Notification
+# SteemCN Notifications
 
 The notification server for [SteemCN](https://steemcn.org/), forked from [busyorg/busy-api](https://github.com/busyorg/busy-api)
 
