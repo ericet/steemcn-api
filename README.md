@@ -1,6 +1,6 @@
-# BUSY API
+# SteemCN Notification
 
-The API server for [Busy](https://busy.org/) - Blockchain-based social network where anyone can earn rewards :rocket:.
+The notification server for [SteemCN](https://steemcn.org/), forked from [busyorg/busy-api](https://github.com/busyorg/busy-api)
 
 ## Development
 
