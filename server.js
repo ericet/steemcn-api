@@ -185,7 +185,7 @@ const getNotifications = ops => {
             break;
           }
           case 'ssc-mainnet1': {
-            if (json.contractAction === 'transfer') {
+            if (json.contractAction === 'transfer' && json.contractName==='token') {
               /** Find transfer */
               const notification = {
                 type: 'transfer',
