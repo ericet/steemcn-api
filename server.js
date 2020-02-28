@@ -229,7 +229,8 @@ const getNotifications = ops => {
           };
           // console.log('Downvote', JSON.stringify([params.author, notification]));
           notifications.push([params.author, notification]);
-        } else {
+        } 
+	      /**else {
           const notification = {
             type: 'vote',
             voter: params.voter,
@@ -240,7 +241,7 @@ const getNotifications = ops => {
           };
           // console.log('Vote', JSON.stringify([params.author, notification]));
           notifications.push([params.author, notification]);
-        }
+        }**/
         break;
       }
       case 'transfer': {
