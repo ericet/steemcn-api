@@ -2,7 +2,6 @@ const _ = require('lodash');
 const express = require('express');
 const SocketServer = require('ws').Server;
 const { Client } = require('busyjs');
-const sdk = require('sc2-sdk');
 const bodyParser = require('body-parser');
 const redis = require('./helpers/redis');
 const utils = require('./helpers/utils');
@@ -10,9 +9,8 @@ const router = require('./routes');
 const notificationUtils = require('./helpers/expoNotifications');
 
 const NOTIFICATION_EXPIRY = 5 * 24 * 3600;
-const LIMIT = 25;
-
-const sc2 = sdk.Initialize({ app: 'busy.app' });
+const LIMIT = 100;
+const startingBlock = 40000000;
 
 const app = express();
 app.use(bodyParser.json());
@@ -23,7 +21,7 @@ const server = app.listen(port, () => console.log(`Listening on ${port}`));
 
 const wss = new SocketServer({ server });
 
-const steemdWsUrl = process.env.STEEMD_WS_URL || 'wss://rpc.buildteam.io';
+const steemdWsUrl = process.env.STEEMD_WS_URL || 'https://anyx.io';
 const client = new Client(steemdWsUrl);
 
 const cache = {};
@@ -65,28 +63,6 @@ wss.on('connection', ws => {
         });
       // } else if (useCache && cache[key]) {
       //  ws.send(JSON.stringify({ id: call.id, cache: true, result: cache[key] }));
-    } else if (call.method === 'login' && call.params && call.params[0]) {
-      sc2.setAccessToken(call.params[0]);
-      sc2
-        .me()
-        .then(result => {
-          console.log('Login success', result.name);
-          ws.name = result.name;
-          ws.verified = true;
-          ws.account = result.account;
-          ws.user_metadata = result.user_metadata;
-          ws.send(JSON.stringify({ id: call.id, result: { login: true, username: result.name } }));
-        })
-        .catch(err => {
-          console.error('Login failed', err);
-          ws.send(
-            JSON.stringify({
-              id: call.id,
-              result: {},
-              error: 'Something is wrong',
-            }),
-          );
-        });
     } else if (call.method === 'subscribe' && call.params && call.params[0]) {
       console.log('Subscribe success', call.params[0]);
       ws.name = call.params[0];
@@ -124,7 +100,6 @@ const getNotifications = ops => {
     switch (type) {
       case 'comment': {
         const isRootPost = !params.parent_author;
-
         /** Find replies */
         if (!isRootPost) {
           const notification = {
@@ -177,6 +152,7 @@ const getNotifications = ops => {
           console.log('Wrong json format on custom_json', err);
         }
         switch (params.id) {
+
           case 'follow': {
             /** Find follow */
             if (
@@ -208,6 +184,22 @@ const getNotifications = ops => {
             }
             break;
           }
+          case 'ssc-mainnet1': {
+            if (json.contractAction === 'transfer') {
+              /** Find transfer */
+              const notification = {
+                type: 'transfer',
+                from: params.required_auths[0],
+                amount: `${json.contractPayload.quantity} ${json.contractPayload.symbol}`,
+                memo: json.contractPayload.memo,
+                timestamp: Date.parse(op.timestamp) / 1000,
+                block: op.block,
+              };
+              // console.log('Transfer', JSON.stringify([json.contractPayload.to, notification]));
+              notifications.push([json.contractPayload.to, notification]);
+              break;
+            }
+          }
         }
         break;
       }
@@ -228,7 +220,7 @@ const getNotifications = ops => {
         /** Find downvote */
         if (params.weight < 0) {
           const notification = {
-            type: 'vote',
+            type: 'downvote',
             voter: params.voter,
             permlink: params.permlink,
             weight: params.weight,
@@ -236,6 +228,17 @@ const getNotifications = ops => {
             block: op.block,
           };
           // console.log('Downvote', JSON.stringify([params.author, notification]));
+          notifications.push([params.author, notification]);
+        } else {
+          const notification = {
+            type: 'vote',
+            voter: params.voter,
+            permlink: params.permlink,
+            weight: params.weight,
+            timestamp: Date.parse(op.timestamp) / 1000,
+            block: op.block,
+          };
+          // console.log('Vote', JSON.stringify([params.author, notification]));
           notifications.push([params.author, notification]);
         }
         break;
@@ -352,7 +355,7 @@ const loadNextBlock = () => {
   redis
     .getAsync('last_block_num')
     .then(res => {
-      let nextBlockNum = res === null ? 20000000 : parseInt(res) + 1;
+      let nextBlockNum = res === null ? startingBlock : parseInt(res) + 1;
       utils
         .getGlobalProps()
         .then(globalProps => {
