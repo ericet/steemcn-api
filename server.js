@@ -10,7 +10,7 @@ const notificationUtils = require('./helpers/expoNotifications');
 
 const NOTIFICATION_EXPIRY = 5 * 24 * 3600;
 const LIMIT = 100;
-const startingBlock = 40000000;
+const startingBlock = 41210000;
 
 const app = express();
 app.use(bodyParser.json());
