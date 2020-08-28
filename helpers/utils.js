@@ -1,6 +1,6 @@
 const Client = require('lightrpc');
 const bluebird = require('bluebird');
-const client = new Client(process.env.STEEMJS_URL || 'https://api.steemit.com');
+const client = new Client(process.env.STEEMJS_URL || 'https://rpc.blurt.buzz');
 bluebird.promisifyAll(client);
 
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));

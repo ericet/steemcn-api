@@ -10,7 +10,7 @@ const notificationUtils = require('./helpers/expoNotifications');
 
 const NOTIFICATION_EXPIRY = 5 * 24 * 3600;
 const LIMIT = 100;
-const startingBlock = 41210000;
+const startingBlock = 1586737;
 
 const app = express();
 app.use(bodyParser.json());
@@ -21,7 +21,7 @@ const server = app.listen(port, () => console.log(`Listening on ${port}`));
 
 const wss = new SocketServer({ server });
 
-const steemdWsUrl = process.env.STEEMD_WS_URL || 'https://anyx.io';
+const steemdWsUrl = process.env.STEEMD_WS_URL || 'wss://blurtd.privex.io';
 const client = new Client(steemdWsUrl);
 
 const cache = {};
@@ -183,22 +183,6 @@ const getNotifications = ops => {
               notifications.push([json[1].author, notification]);
             }
             break;
-          }
-          case 'ssc-mainnet1': {
-            if (json.contractAction === 'transfer' && json.contractName==='token') {
-              /** Find transfer */
-              const notification = {
-                type: 'transfer',
-                from: params.required_auths[0],
-                amount: `${json.contractPayload.quantity} ${json.contractPayload.symbol}`,
-                memo: json.contractPayload.memo,
-                timestamp: Date.parse(op.timestamp) / 1000,
-                block: op.block,
-              };
-              // console.log('Transfer', JSON.stringify([json.contractPayload.to, notification]));
-              notifications.push([json.contractPayload.to, notification]);
-              break;
-            }
           }
         }
         break;
