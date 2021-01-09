@@ -10,7 +10,7 @@ const notificationUtils = require('./helpers/expoNotifications');
 
 const NOTIFICATION_EXPIRY = 5 * 24 * 3600;
 const LIMIT = 100;
-const startingBlock = 1586737;
+const startingBlock = 5360000;
 
 const app = express();
 app.use(bodyParser.json());
@@ -21,7 +21,7 @@ const server = app.listen(port, () => console.log(`Listening on ${port}`));
 
 const wss = new SocketServer({ server });
 
-const steemdWsUrl = process.env.STEEMD_WS_URL || 'wss://blurtd.privex.io';
+const steemdWsUrl = process.env.STEEMD_WS_URL || 'ws://138.201.152.77';
 const client = new Client(steemdWsUrl);
 
 const cache = {};

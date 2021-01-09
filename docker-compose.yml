@@ -16,6 +16,7 @@ services:
       - redis-net
     depends_on:
       - redis
+    restart: always
 networks:
   redis-net:
 volumes:
