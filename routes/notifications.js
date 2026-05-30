@@ -1,14 +1,17 @@
 const express = require('express');
-const _ = require('lodash');
-
 const redis = require('../helpers/redis');
-const validTokenMiddleware = require('../middlewares/expoToken');
 
 const router = express.Router();
 
+const getUsername = req => req.body.username || req.query.username;
+
 router.get('/', async (req, res) => {
+  const username = getUsername(req);
+  if (!username) {
+    return res.status(400).send({ error: 'username is required' });
+  }
   redis
-    .lrangeAsync(`notifications:${req.user.name}`, 0, -1)
+    .lrangeAsync(`notifications:${username}`, 0, -1)
     .then(results => {
       const notifications = results.map(notification => JSON.parse(notification));
       res.send(notifications);
@@ -16,9 +19,14 @@ router.get('/', async (req, res) => {
     .catch(() => res.sendStatus(500));
 });
 
-router.post('/register', validTokenMiddleware, async (req, res) => {
+router.post('/register', async (req, res) => {
+  const username = getUsername(req);
+  const token = req.body.token;
+  if (!username || !token) {
+    return res.status(400).send({ error: 'username and token are required' });
+  }
   redis
-    .saddAsync(`tokens:${req.user.name}`, req.expoToken)
+    .saddAsync(`tokens:${username}`, token)
     .then(result => {
       if (result === 1) {
         // 1 token was added
@@ -30,9 +38,14 @@ router.post('/register', validTokenMiddleware, async (req, res) => {
     .catch(() => res.sendStatus(500));
 });
 
-router.post('/unregister', validTokenMiddleware, async (req, res) => {
+router.post('/unregister', async (req, res) => {
+  const username = getUsername(req);
+  const token = req.body.token;
+  if (!username || !token) {
+    return res.status(400).send({ error: 'username and token are required' });
+  }
   redis
-    .sremAsync(`tokens:${req.user.name}`, req.expoToken)
+    .sremAsync(`tokens:${username}`, token)
     .then(result => {
       if (result === 1) {
         // 1 token removed from set

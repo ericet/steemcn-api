@@ -1,7 +1,30 @@
 const Client = require('lightrpc');
 const bluebird = require('bluebird');
-const client = new Client(process.env.STEEMJS_URL || 'https://api.steemit.com');
+
+const ENDPOINTS = [
+  process.env.STEEMJS_URL || 'https://api.steemit.com',
+  'https://api.steemitdev.com',
+  'https://steem.justyy.com',
+  'https://api.justyy.com',
+  'https://api.moecki.online',
+  'https://api.campingclub.me',
+  'https://api.wherein.io',
+  'https://api2.justyy.com',
+  'https://steemapi.boylikegirl.club',
+];
+
+let currentEndpointIndex = 0;
+let client = new Client(ENDPOINTS[currentEndpointIndex]);
 bluebird.promisifyAll(client);
+
+const switchEndpoint = () => {
+  currentEndpointIndex = (currentEndpointIndex + 1) % ENDPOINTS.length;
+  const newEndpoint = ENDPOINTS[currentEndpointIndex];
+  console.log(`Switching to endpoint: ${newEndpoint}`);
+  client = new Client(newEndpoint);
+  bluebird.promisifyAll(client);
+  return client;
+};
 
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
 
@@ -29,6 +52,22 @@ const getBlockOps = block => {
   return operations;
 };
 
+const retryWithFailover = async (fn, maxRetries = ENDPOINTS.length) => {
+  let lastError;
+  for (let i = 0; i < maxRetries; i++) {
+    try {
+      return await fn();
+    } catch (error) {
+      lastError = error;
+      console.error(`Request failed on ${ENDPOINTS[currentEndpointIndex]}:`, error.message);
+      if (i < maxRetries - 1) {
+        switchEndpoint();
+      }
+    }
+  }
+  throw lastError;
+};
+
 module.exports = {
   sleep,
   getBlock,
@@ -36,4 +75,6 @@ module.exports = {
   getGlobalProps,
   mutliOpsInBlock,
   getBlockOps,
+  switchEndpoint,
+  retryWithFailover,
 };

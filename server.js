@@ -1,16 +1,16 @@
 const _ = require('lodash');
 const express = require('express');
 const SocketServer = require('ws').Server;
-const { Client } = require('busyjs');
+const LightrpcClient = require('lightrpc');
 const bodyParser = require('body-parser');
 const redis = require('./helpers/redis');
 const utils = require('./helpers/utils');
 const router = require('./routes');
 const notificationUtils = require('./helpers/expoNotifications');
 
-const NOTIFICATION_EXPIRY = 5 * 24 * 3600;
-const LIMIT = 100;
-const startingBlock = 41210000;
+const NOTIFICATION_EXPIRY = 14 * 24 * 3600;
+const LIMIT = 1000;
+const startingBlock = 102888528;
 
 const app = express();
 app.use(bodyParser.json());
@@ -21,8 +21,9 @@ const server = app.listen(port, () => console.log(`Listening on ${port}`));
 
 const wss = new SocketServer({ server });
 
-const steemdWsUrl = process.env.STEEMD_WS_URL || 'https://anyx.io';
-const client = new Client(steemdWsUrl);
+const steemApiUrl =
+  process.env.STEEMJS_URL || process.env.STEEMD_WS_URL || 'https://api.steemit.com';
+const rpcClient = new LightrpcClient(steemApiUrl);
 
 const cache = {};
 const useCache = false;
@@ -70,7 +71,17 @@ wss.on('connection', ws => {
         JSON.stringify({ id: call.id, result: { subscribe: true, username: call.params[0] } }),
       );
     } else if (call.method && call.params) {
-      client.call(call.method, call.params, (err, result) => {
+      rpcClient.send({ method: call.method, params: call.params }, (err, result) => {
+        if (err) {
+          console.error('RPC call failed', call.method, err);
+          ws.send(
+            JSON.stringify({
+              id: call.id,
+              error: err.message || 'RPC call failed',
+            }),
+          );
+          return;
+        }
         ws.send(JSON.stringify({ id: call.id, result }));
         // if (useCache) {
         //  cache[key] = result;
@@ -184,22 +195,6 @@ const getNotifications = ops => {
             }
             break;
           }
-          case 'ssc-mainnet1': {
-            if (json.contractAction === 'transfer' && json.contractName==='token') {
-              /** Find transfer */
-              const notification = {
-                type: 'transfer',
-                from: params.required_auths[0],
-                amount: `${json.contractPayload.quantity} ${json.contractPayload.symbol}`,
-                memo: json.contractPayload.memo,
-                timestamp: Date.parse(op.timestamp) / 1000,
-                block: op.block,
-              };
-              // console.log('Transfer', JSON.stringify([json.contractPayload.to, notification]));
-              notifications.push([json.contractPayload.to, notification]);
-              break;
-            }
-          }
         }
         break;
       }
@@ -230,7 +225,7 @@ const getNotifications = ops => {
           // console.log('Downvote', JSON.stringify([params.author, notification]));
           notifications.push([params.author, notification]);
         } 
-	      /**else {
+	      else {
           const notification = {
             type: 'vote',
             voter: params.voter,
@@ -241,7 +236,7 @@ const getNotifications = ops => {
           };
           // console.log('Vote', JSON.stringify([params.author, notification]));
           notifications.push([params.author, notification]);
-        }**/
+        }
         break;
       }
       case 'transfer': {
