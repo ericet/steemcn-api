@@ -8,9 +8,10 @@ const utils = require('./helpers/utils');
 const router = require('./routes');
 const notificationUtils = require('./helpers/expoNotifications');
 
-const NOTIFICATION_EXPIRY = 14 * 24 * 3600;
-const LIMIT = 1000;
-const startingBlock = 102888528;
+const NOTIFICATION_EXPIRY = 7 * 24 * 3600;
+const LIMIT = 500;
+const BATCH_SIZE = 10;
+let startingBlock = null;
 
 const app = express();
 app.use(bodyParser.json());
@@ -347,6 +348,51 @@ const loadBlock = blockNum => {
     });
 };
 
+const loadBlocksBatch = async (startBlock, endBlock) => {
+  try {
+    const batchSize = endBlock - startBlock + 1;
+    const results = await utils.mutliOpsInBlock(startBlock, batchSize, false);
+    
+    const allNotifications = [];
+    results.forEach((ops, index) => {
+      if (ops && ops.length > 0) {
+        const blockNum = startBlock + index;
+        const notifications = getNotifications(ops);
+        allNotifications.push(...notifications);
+      }
+    });
+
+    const redisOps = [];
+    allNotifications.forEach(notification => {
+      const key = `notifications:${notification[0]}`;
+      redisOps.push(['lpush', key, JSON.stringify(notification[1])]);
+      redisOps.push(['expire', key, NOTIFICATION_EXPIRY]);
+      redisOps.push(['ltrim', key, 0, LIMIT - 1]);
+    });
+    redisOps.push(['set', 'last_block_num', endBlock]);
+
+    await redis.multi(redisOps).execAsync();
+    console.log(`Batch loaded blocks ${startBlock}-${endBlock}, notifications stored: ${allNotifications.length}`);
+
+    allNotifications.forEach(notification => {
+      wss.clients.forEach(client => {
+        if (client.name && client.name === notification[0]) {
+          client.send(JSON.stringify({
+            type: 'notification',
+            notification: notification[1],
+          }));
+        }
+      });
+    });
+
+    notificationUtils.sendAllNotifications(allNotifications);
+    loadNextBlock();
+  } catch (err) {
+    console.error('Batch load failed, falling back to single block:', err);
+    loadBlock(startBlock);
+  }
+};
+
 const loadNextBlock = () => {
   redis
     .getAsync('last_block_num')
@@ -356,8 +402,15 @@ const loadNextBlock = () => {
         .getGlobalProps()
         .then(globalProps => {
           const lastIrreversibleBlockNum = globalProps.last_irreversible_block_num;
-          if (lastIrreversibleBlockNum >= nextBlockNum) {
-            loadBlock(nextBlockNum);
+          const blocksToSync = lastIrreversibleBlockNum - nextBlockNum + 1;
+          
+          if (blocksToSync > 0) {
+            if (blocksToSync >= BATCH_SIZE) {
+              const endBlock = nextBlockNum + BATCH_SIZE - 1;
+              loadBlocksBatch(nextBlockNum, endBlock);
+            } else {
+              loadBlock(nextBlockNum);
+            }
           } else {
             utils.sleep(2000).then(() => {
               console.log(
@@ -383,8 +436,18 @@ const loadNextBlock = () => {
     });
 };
 
-const start = () => {
+const start = async () => {
   console.info('Start streaming blockchain');
+  
+  try {
+    const globalProps = await utils.getGlobalProps();
+    startingBlock = globalProps.last_irreversible_block_num - 100000;
+    console.log(`Starting block set to: ${startingBlock} (current - 100000)`);
+  } catch (err) {
+    console.error('Failed to get global props, using fallback starting block');
+    startingBlock = 106315725;
+  }
+  
   loadNextBlock();
 
   /** Send heartbeat to peers */
