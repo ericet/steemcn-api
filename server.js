@@ -9,7 +9,7 @@ const router = require('./routes');
 const notificationUtils = require('./helpers/expoNotifications');
 
 const NOTIFICATION_EXPIRY = 7 * 24 * 3600;
-const LIMIT = 500;
+const LIMIT = 1000;
 const BATCH_SIZE = 10;
 let startingBlock = null;
 
@@ -106,6 +106,8 @@ wss.on('connection', ws => {
 
 const getNotifications = ops => {
   const notifications = [];
+  const voteGroups = {}; // Group votes by author+block
+  
   ops.forEach(op => {
     const type = op.op[0];
     const params = op.op[1];
@@ -213,30 +215,27 @@ const getNotifications = ops => {
         break;
       }
       case 'vote': {
-        /** Find downvote */
+        const groupKey = `${params.author}:${op.block}`;
+        if (!voteGroups[groupKey]) {
+          voteGroups[groupKey] = {
+            author: params.author,
+            block: op.block,
+            timestamp: Date.parse(op.timestamp) / 1000,
+            upvotes: [],
+            downvotes: [],
+          };
+        }
+        
+        const voteData = {
+          voter: params.voter,
+          permlink: params.permlink,
+          weight: params.weight,
+        };
+        
         if (params.weight < 0) {
-          const notification = {
-            type: 'downvote',
-            voter: params.voter,
-            permlink: params.permlink,
-            weight: params.weight,
-            timestamp: Date.parse(op.timestamp) / 1000,
-            block: op.block,
-          };
-          // console.log('Downvote', JSON.stringify([params.author, notification]));
-          notifications.push([params.author, notification]);
-        } 
-	      else {
-          const notification = {
-            type: 'vote',
-            voter: params.voter,
-            permlink: params.permlink,
-            weight: params.weight,
-            timestamp: Date.parse(op.timestamp) / 1000,
-            block: op.block,
-          };
-          // console.log('Vote', JSON.stringify([params.author, notification]));
-          notifications.push([params.author, notification]);
+          voteGroups[groupKey].downvotes.push(voteData);
+        } else {
+          voteGroups[groupKey].upvotes.push(voteData);
         }
         break;
       }
@@ -256,6 +255,32 @@ const getNotifications = ops => {
       }
     }
   });
+  
+  // Convert vote groups into notifications
+  Object.values(voteGroups).forEach(group => {
+    if (group.upvotes.length > 0) {
+      const notification = {
+        type: 'vote',
+        block: group.block,
+        timestamp: group.timestamp,
+        count: group.upvotes.length,
+        votes: group.upvotes,
+      };
+      notifications.push([group.author, notification]);
+    }
+    
+    if (group.downvotes.length > 0) {
+      const notification = {
+        type: 'downvote',
+        block: group.block,
+        timestamp: group.timestamp,
+        count: group.downvotes.length,
+        votes: group.downvotes,
+      };
+      notifications.push([group.author, notification]);
+    }
+  });
+  
   return notifications;
 };
 
