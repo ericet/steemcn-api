@@ -11,7 +11,9 @@ const notificationUtils = require('./helpers/expoNotifications');
 const NOTIFICATION_EXPIRY = 7 * 24 * 3600;
 const LIMIT = 1000;
 const BATCH_SIZE = 10;
+const MAX_RETRIES = 3;
 let startingBlock = null;
+const blockRetries = {}; // Track retry attempts per block
 
 const app = express();
 app.use(bodyParser.json());
@@ -284,7 +286,26 @@ const getNotifications = ops => {
   return notifications;
 };
 
+const skipBlock = (blockNum) => {
+  console.log(`Skipping block ${blockNum} after ${MAX_RETRIES} failed attempts`);
+  delete blockRetries[blockNum];
+  redis
+    .setAsync('last_block_num', blockNum)
+    .then(() => {
+      loadNextBlock();
+    })
+    .catch(err => {
+      console.error('Redis set last_block_num failed during skip', err);
+      loadNextBlock();
+    });
+};
+
 const loadBlock = blockNum => {
+  // Initialize retry counter for this block
+  if (!blockRetries[blockNum]) {
+    blockRetries[blockNum] = 0;
+  }
+
   utils
     .getOpsInBlock(blockNum, false)
     .then(ops => {
@@ -295,6 +316,7 @@ const loadBlock = blockNum => {
           .then(block => {
             if (block && block.previous && block.transactions.length === 0) {
               console.log('Block exist and is empty, load next', blockNum);
+              delete blockRetries[blockNum];
               redis
                 .setAsync('last_block_num', blockNum)
                 .then(() => {
@@ -302,74 +324,114 @@ const loadBlock = blockNum => {
                 })
                 .catch(err => {
                   console.error('Redis set last_block_num failed', err);
-                  loadBlock(blockNum);
+                  blockRetries[blockNum]++;
+                  if (blockRetries[blockNum] >= MAX_RETRIES) {
+                    skipBlock(blockNum);
+                  } else {
+                    loadBlock(blockNum);
+                  }
                 });
             } else {
-              console.log('Sleep and retry', blockNum);
+              blockRetries[blockNum]++;
+              if (blockRetries[blockNum] >= MAX_RETRIES) {
+                skipBlock(blockNum);
+              } else {
+                console.log(`Sleep and retry (${blockRetries[blockNum]}/${MAX_RETRIES})`, blockNum);
+                utils.sleep(2000).then(() => {
+                  loadBlock(blockNum);
+                });
+              }
+            }
+          })
+          .catch(err => {
+            blockRetries[blockNum]++;
+            if (blockRetries[blockNum] >= MAX_RETRIES) {
+              skipBlock(blockNum);
+            } else {
+              console.log(
+                `Error lightrpc (getBlock), sleep and retry (${blockRetries[blockNum]}/${MAX_RETRIES})`,
+                blockNum,
+                JSON.stringify(err),
+              );
               utils.sleep(2000).then(() => {
                 loadBlock(blockNum);
               });
             }
-          })
-          .catch(err => {
-            console.log(
-              'Error lightrpc (getBlock), sleep and retry',
-              blockNum,
-              JSON.stringify(err),
-            );
+          });
+      } else {
+        try {
+          const notifications = getNotifications(ops);
+          /** Create redis operations array */
+          const redisOps = [];
+          notifications.forEach(notification => {
+            const key = `notifications:${notification[0]}`
+            redisOps.push([
+              'lpush',
+              key,
+              JSON.stringify(notification[1]),
+            ]);
+            redisOps.push(['expire', key, NOTIFICATION_EXPIRY]);
+            redisOps.push(['ltrim', key, 0, LIMIT - 1]);
+          });
+          redisOps.push(['set', 'last_block_num', blockNum]);
+          redis
+            .multi(redisOps)
+            .execAsync()
+            .then(() => {
+              console.log('Block loaded', blockNum, 'notification stored', notifications.length);
+              delete blockRetries[blockNum];
+
+              /** Send push notification for logged peers */
+              notifications.forEach(notification => {
+                wss.clients.forEach(client => {
+                  if (client.name && client.name === notification[0]) {
+                    console.log('Send push notification', notification[0]);
+                    client.send(
+                      JSON.stringify({
+                        type: 'notification',
+                        notification: notification[1],
+                      }),
+                    );
+                  }
+                });
+              });
+              /** Send notifications to all devices */
+              notificationUtils.sendAllNotifications(notifications);
+              loadNextBlock();
+            })
+            .catch(err => {
+              console.error('Redis store notification multi failed', err);
+              blockRetries[blockNum]++;
+              if (blockRetries[blockNum] >= MAX_RETRIES) {
+                skipBlock(blockNum);
+              } else {
+                loadBlock(blockNum);
+              }
+            });
+        } catch (err) {
+          console.error('Error processing block notifications', blockNum, err);
+          blockRetries[blockNum]++;
+          if (blockRetries[blockNum] >= MAX_RETRIES) {
+            skipBlock(blockNum);
+          } else {
             utils.sleep(2000).then(() => {
               loadBlock(blockNum);
             });
-          });
-      } else {
-        const notifications = getNotifications(ops);
-        /** Create redis operations array */
-        const redisOps = [];
-        notifications.forEach(notification => {
-          const key = `notifications:${notification[0]}`
-          redisOps.push([
-            'lpush',
-            key,
-            JSON.stringify(notification[1]),
-          ]);
-          redisOps.push(['expire', key, NOTIFICATION_EXPIRY]);
-          redisOps.push(['ltrim', key, 0, LIMIT - 1]);
-        });
-        redisOps.push(['set', 'last_block_num', blockNum]);
-        redis
-          .multi(redisOps)
-          .execAsync()
-          .then(() => {
-            console.log('Block loaded', blockNum, 'notification stored', notifications.length);
-
-            /** Send push notification for logged peers */
-            notifications.forEach(notification => {
-              wss.clients.forEach(client => {
-                if (client.name && client.name === notification[0]) {
-                  console.log('Send push notification', notification[0]);
-                  client.send(
-                    JSON.stringify({
-                      type: 'notification',
-                      notification: notification[1],
-                    }),
-                  );
-                }
-              });
-            });
-            /** Send notifications to all devices */
-            notificationUtils.sendAllNotifications(notifications);
-            loadNextBlock();
-          })
-          .catch(err => {
-            console.error('Redis store notification multi failed', err);
-            loadBlock(blockNum);
-          });
+          }
+        }
       }
     })
     .catch(err => {
       console.error('Call failed with lightrpc (getOpsInBlock)', err);
-      console.log('Retry', blockNum);
-      loadBlock(blockNum);
+      blockRetries[blockNum]++;
+      if (blockRetries[blockNum] >= MAX_RETRIES) {
+        skipBlock(blockNum);
+      } else {
+        console.log(`Retry (${blockRetries[blockNum]}/${MAX_RETRIES})`, blockNum);
+        utils.sleep(2000).then(() => {
+          loadBlock(blockNum);
+        });
+      }
     });
 };
 
