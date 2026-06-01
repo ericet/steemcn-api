@@ -440,9 +440,16 @@ const loadBlocksBatch = async (startBlock, endBlock) => {
     const batchSize = endBlock - startBlock + 1;
     const results = await utils.mutliOpsInBlock(startBlock, batchSize, false);
     
+    // Validate results is an array
+    if (!Array.isArray(results)) {
+      console.error('Batch results is not an array, falling back to single block');
+      loadBlock(startBlock);
+      return;
+    }
+    
     const allNotifications = [];
     results.forEach((ops, index) => {
-      if (ops && ops.length > 0) {
+      if (ops && Array.isArray(ops) && ops.length > 0) {
         const blockNum = startBlock + index;
         const notifications = getNotifications(ops);
         allNotifications.push(...notifications);
@@ -475,7 +482,7 @@ const loadBlocksBatch = async (startBlock, endBlock) => {
     notificationUtils.sendAllNotifications(allNotifications);
     loadNextBlock();
   } catch (err) {
-    console.error('Batch load failed, falling back to single block:', err);
+    console.error('Batch load failed, falling back to single block:', err.message || err);
     loadBlock(startBlock);
   }
 };
