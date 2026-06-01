@@ -3,7 +3,6 @@ const bluebird = require('bluebird');
 
 const ENDPOINTS = [
   process.env.STEEMJS_URL || 'https://api.steemit.com',
-  'https://api.steemitdev.com',
   'https://steem.justyy.com',
   'https://api.justyy.com',
   'https://api.moecki.online',
