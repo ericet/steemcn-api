@@ -486,7 +486,7 @@ const loadNextBlock = () => {
     .then(res => {
       let nextBlockNum = res === null ? startingBlock : parseInt(res) + 1;
       utils
-        .getGlobalProps()
+        .retryWithFailover(() => utils.getGlobalProps())
         .then(globalProps => {
           const lastIrreversibleBlockNum = globalProps.last_irreversible_block_num;
           const blocksToSync = lastIrreversibleBlockNum - nextBlockNum + 1;
@@ -511,9 +511,9 @@ const loadNextBlock = () => {
           }
         })
         .catch(err => {
-          console.error('Call failed with lightrpc (getGlobalProps)', err);
-          utils.sleep(2000).then(() => {
-            console.log('Retry loadNextBlock', nextBlockNum);
+          console.error('Call failed with lightrpc (getGlobalProps) on all endpoints', err);
+          utils.sleep(5000).then(() => {
+            console.log('Retry loadNextBlock after 5s', nextBlockNum);
             loadNextBlock();
           });
         });
@@ -527,11 +527,11 @@ const start = async () => {
   console.info('Start streaming blockchain');
   
   try {
-    const globalProps = await utils.getGlobalProps();
+    const globalProps = await utils.retryWithFailover(() => utils.getGlobalProps());
     startingBlock = globalProps.last_irreversible_block_num - 100000;
     console.log(`Starting block set to: ${startingBlock} (current - 100000)`);
   } catch (err) {
-    console.error('Failed to get global props, using fallback starting block');
+    console.error('Failed to get global props from all endpoints, using fallback starting block');
     startingBlock = 106315725;
   }
   
