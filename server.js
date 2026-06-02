@@ -9,7 +9,6 @@ const router = require('./routes');
 const notificationUtils = require('./helpers/expoNotifications');
 
 const NOTIFICATION_EXPIRY = 7 * 24 * 3600;
-const LIMIT = 1000;
 const BATCH_SIZE = 10;
 const MAX_RETRIES = 3;
 let startingBlock = null;
@@ -371,7 +370,6 @@ const loadBlock = blockNum => {
               JSON.stringify(notification[1]),
             ]);
             redisOps.push(['expire', key, NOTIFICATION_EXPIRY]);
-            redisOps.push(['ltrim', key, 0, LIMIT - 1]);
           });
           redisOps.push(['set', 'last_block_num', blockNum]);
           redis
@@ -461,7 +459,6 @@ const loadBlocksBatch = async (startBlock, endBlock) => {
       const key = `notifications:${notification[0]}`;
       redisOps.push(['lpush', key, JSON.stringify(notification[1])]);
       redisOps.push(['expire', key, NOTIFICATION_EXPIRY]);
-      redisOps.push(['ltrim', key, 0, LIMIT - 1]);
     });
     redisOps.push(['set', 'last_block_num', endBlock]);
 
